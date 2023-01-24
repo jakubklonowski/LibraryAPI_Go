@@ -20,7 +20,7 @@ var (
 	db *sql.DB
 )
 
-// STRUCT --------------------------------------------------------------------------
+// MODELS --------------------------------------------------------------------------
 
 type Book struct {
 	Id     int
@@ -90,17 +90,23 @@ func getConfig() {
 func handleRequests() {
 	router := mux.NewRouter()
 
-	router.HandleFunc("/books/{id}", getBook).Methods("GET")
-	router.HandleFunc("/books", getBooks).Methods("GET")
-	router.HandleFunc("/books", postBook).Methods("POST")
-	router.HandleFunc("/books/{id}", putBook).Methods("PUT")
-	router.HandleFunc("/books/{id}", deleteBook).Methods("DELETE")
+	router.HandleFunc("/api/books/{id}", getBook).Methods("GET")
+	router.HandleFunc("/api/books", getBooks).Methods("GET")
+	router.HandleFunc("/api/books", postBook).Methods("POST")
+	router.HandleFunc("/api/books/{id}", putBook).Methods("PUT")
+	router.HandleFunc("/api/books/{id}", deleteBook).Methods("DELETE")
 
-	router.HandleFunc("/clients/{id}", getClient).Methods("GET")
-	router.HandleFunc("/clients", getClients).Methods("GET")
-	router.HandleFunc("/clients", postClient).Methods("POST")
-	router.HandleFunc("/clients/{id}", putClient).Methods("PUT")
-	router.HandleFunc("/clients/{id}", deleteClient).Methods("DELETE")
+	router.HandleFunc("/api/clients/{id}", getClient).Methods("GET")
+	router.HandleFunc("/api/clients", getClients).Methods("GET")
+	router.HandleFunc("/api/clients", postClient).Methods("POST")
+	router.HandleFunc("/api/clients/{id}", putClient).Methods("PUT")
+	router.HandleFunc("/api/clients/{id}", deleteClient).Methods("DELETE")
+
+	router.HandleFunc("/api/libraries/{id}", getLibrary).Methods("GET")
+	router.HandleFunc("/api/libraries", getLibraries).Methods("GET")
+	router.HandleFunc("/api/libraries", postLibrary).Methods("POST")
+	router.HandleFunc("/api/libraries/{id}", putLibrary).Methods("PUT")
+	router.HandleFunc("/api/libraries/{id}", deleteLibrary).Methods("DELETE")
 
 	log.Fatal(http.ListenAndServe(":10000", router))
 }
@@ -157,7 +163,7 @@ func postBook(w http.ResponseWriter, r *http.Request) {
 
 	requestBody, _ := ioutil.ReadAll(r.Body)
 	json.Unmarshal(requestBody, &payload)
-	result, _ := db.Exec("INSERT INTO book (Name, Author) VALUES (?, ?)", string(payload.Name), string(payload.Author))
+	result, _ := db.Exec("INSERT INTO book (Name, Author) VALUES (?, ?)", payload.Name, payload.Author)
 	id, _ := result.LastInsertId()
 	response = BookResponse{Id: int(id)}
 	w.WriteHeader(http.StatusCreated)
@@ -223,7 +229,7 @@ func postClient(w http.ResponseWriter, r *http.Request) {
 
 	requestBody, _ := ioutil.ReadAll(r.Body)
 	json.Unmarshal(requestBody, &payload)
-	result, _ := db.Exec("INSERT INTO client (Name) VALUES (?)", string(payload.Name))
+	result, _ := db.Exec("INSERT INTO client (Name) VALUES (?)", payload.Name)
 	id, _ := result.LastInsertId()
 	response = ClientResponse{Id: int(id)}
 	w.WriteHeader(http.StatusCreated)
@@ -249,5 +255,72 @@ func deleteClient(w http.ResponseWriter, r *http.Request) {
 	vars_id := vars["id"]
 
 	db.Exec("DELETE FROM client WHERE id = ?", vars_id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Libraries
+
+// GET /api/libraries/1
+func getLibrary(w http.ResponseWriter, r *http.Request) {
+	var idBook, idClient int
+	var date string
+	var active bool
+
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	db.QueryRow("SELECT id_book, id_client, date, active FROM library WHERE id = ?", id).Scan(&idBook, &idClient, &date, &active)
+	library := LibraryRequest{IdBook: idBook, IdClient: idClient, Date: date, Active: active}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(library)
+}
+
+// GET /api/libraries
+func getLibraries(w http.ResponseWriter, r *http.Request) {
+	var id, id_book, id_client int
+	var date string
+	var active bool
+	var libraries []Library
+
+	rows, _ := db.Query("SELECT id, id_book, id_client, date, active FROM library")
+	for rows.Next() {
+		rows.Scan(&id, &id_book, &id_client, &date, &active)
+		libraries = append(libraries, Library{Id: id, IdBook: id_book, IdClient: id_client, Date: date, Active: active})
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(libraries)
+}
+
+// POST /api/libraries LibraryRequest{}
+func postLibrary(w http.ResponseWriter, r *http.Request) {
+	var payload LibraryRequest
+	var response LibraryResponse
+
+	requestBody, _ := ioutil.ReadAll(r.Body)
+	json.Unmarshal(requestBody, &payload)
+	result, _ := db.Exec("INSERT INTO library (id_book, id_client, date, active) VALUES (?, ?, ?, ?)", payload.IdBook, payload.IdClient, payload.Date, payload.Active)
+	id, _ := result.LastInsertId()
+	response = LibraryResponse{Id: int(id)}
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+// PUT /api/libraries/1 LibraryRequest{}
+func putLibrary(w http.ResponseWriter, r *http.Request) {
+	var payload LibraryRequest
+
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	db.Exec("UPDATE library SET id_book = ?, id_client = ?, date = ?, active = ? WHERE id = ?", payload.IdBook, payload.IdClient, payload.Date, payload.Active, id)
+	w.WriteHeader(http.StatusOK)
+}
+
+// DELETE /api/libraries/1
+func deleteLibrary(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	db.Exec("DELETE FROM library WHERE id = ?", id)
 	w.WriteHeader(http.StatusNoContent)
 }
