@@ -145,12 +145,12 @@ func getBook(w http.ResponseWriter, r *http.Request) {
 	// repository
 	errScan := db.QueryRow("SELECT name, author FROM book WHERE id = ?", int_id).Scan(&name, &author)
 	if errScan != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	// number too low or too high -> empty fields
 	if name == "" || author == "" {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	book := BookRequest{Name: name, Author: author}
@@ -302,12 +302,12 @@ func getClient(w http.ResponseWriter, r *http.Request) {
 	// repository
 	errScan := db.QueryRow("SELECT name FROM client WHERE id = ?", int_id).Scan(&name)
 	if errScan != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	// number too low or too high -> empty field
 	if name == "" {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	client := ClientRequest{Name: name}
@@ -461,12 +461,12 @@ func getLibrary(w http.ResponseWriter, r *http.Request) {
 	// repository
 	errScan := db.QueryRow("SELECT id_book, id_client, date, active FROM library WHERE id = ?", int_id).Scan(&idBook, &idClient, &date, &active)
 	if errScan != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	// number too low or too high -> empty field
 	if idBook == 0 || idClient == 0 || date == "" {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	library := LibraryRequest{IdBook: idBook, IdClient: idClient, Date: date, Active: active}

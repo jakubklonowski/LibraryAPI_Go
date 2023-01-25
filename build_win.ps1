@@ -1,0 +1,1 @@
+go build library.go
