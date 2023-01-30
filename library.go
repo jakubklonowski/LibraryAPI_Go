@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
 )
 
 const ()
@@ -59,11 +60,30 @@ type Library struct {
 	Active   bool
 }
 
+type LibraryJoin struct {
+	Id         int
+	IdBook     int
+	BookName   string
+	IdClient   int
+	ClientName string
+	Date       string
+	Active     bool
+}
+
 type LibraryRequest struct {
 	IdBook   int
 	IdClient int
 	Date     string
 	Active   bool
+}
+
+type LibraryRequestJoin struct {
+	IdBook     int
+	BookName   string
+	IdClient   int
+	ClientName string
+	Date       string
+	Active     bool
 }
 
 type LibraryResponse struct {
@@ -88,6 +108,16 @@ func getConfig() {
 	db, _ = sql.Open("mysql", connectionString)
 }
 
+func log2File() {
+	// If the file doesn't exist, create it or append to the file
+	file, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.SetOutput(file)
+}
+
 func handleRequests() { // router
 	router := mux.NewRouter()
 
@@ -109,15 +139,23 @@ func handleRequests() { // router
 	router.HandleFunc("/api/libraries/{id}", putLibrary).Methods("PUT")       // updates borrow by id
 	router.HandleFunc("/api/libraries/{id}", deleteLibrary).Methods("DELETE") // deletes borrow by id
 
-	log.Fatal(http.ListenAndServe(":10000", router))
+	cors := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete},
+		AllowCredentials: true,
+	})
+	handler := cors.Handler(router)
+	log.Fatal(http.ListenAndServe(":10000", handler))
 }
 
 func main() {
 	getConfig()
+	log2File()
 
 	// Connect and check the server version
 	var version string
 	db.QueryRow("SELECT VERSION()").Scan(&version)
+	log.Println("Connected to:", version)
 	fmt.Println("Connected to:", version)
 
 	handleRequests()
@@ -140,24 +178,30 @@ func getBook(w http.ResponseWriter, r *http.Request) {
 	int_id, errAtoi := strconv.Atoi(id)
 	if errAtoi != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("GET /api/books/" + id + " " + errAtoi.Error())
 		return
 	}
+
 	// repository
 	errScan := db.QueryRow("SELECT name, author FROM book WHERE id = ?", int_id).Scan(&name, &author)
 	if errScan != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/books/" + id + " " + errScan.Error())
 		return
 	}
-	// number too low or too high -> empty fields
+	// number too low or too high -> empty fields // NOT USED
 	if name == "" || author == "" {
 		w.WriteHeader(http.StatusNoContent)
+		log.Println("GET /api/books/" + id + " empty fields")
 		return
 	}
 	book := BookRequest{Name: name, Author: author}
+
 	w.WriteHeader(http.StatusOK)
 	errEncode := json.NewEncoder(w).Encode(book)
 	if errEncode != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/books/" + id + " " + errEncode.Error())
 		return
 	}
 }
@@ -172,19 +216,26 @@ func getBooks(w http.ResponseWriter, r *http.Request) {
 	rows, errQuery := db.Query("SELECT id, name, author FROM book")
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/books " + errQuery.Error())
 		return
 	}
 	for rows.Next() {
 		errScan := rows.Scan(&id, &name, &author)
 		if errScan != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Println("GET /api/books " + errScan.Error())
 			return
 		}
 		books = append(books, Book{Id: id, Name: name, Author: author})
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(books)
+	errEncode := json.NewEncoder(w).Encode(books)
+	if errEncode != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/books " + errEncode.Error())
+		return
+	}
 }
 
 // POST /api/books BookRequest{}
@@ -195,16 +246,19 @@ func postBook(w http.ResponseWriter, r *http.Request) {
 	requestBody, errIO := ioutil.ReadAll(r.Body)
 	if errIO != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/books " + errIO.Error())
 		return
 	}
 	errUnmarshal := json.Unmarshal(requestBody, &payload)
 	if errUnmarshal != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/books " + errUnmarshal.Error())
 		return
 	}
 	// wrong JSON
 	if payload.Name == "" || payload.Author == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("POST /api/books empty fields in JSON")
 		return
 	}
 
@@ -212,17 +266,24 @@ func postBook(w http.ResponseWriter, r *http.Request) {
 	result, errQuery := db.Exec("INSERT INTO book (Name, Author) VALUES (?, ?)", payload.Name, payload.Author)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/books " + errQuery.Error())
 		return
 	}
 	id, errLII := result.LastInsertId()
 	if errLII != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/books" + errLII.Error())
 		return
 	}
 	response = BookResponse{Id: int(id)}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
+	errEncode := json.NewEncoder(w).Encode(response)
+	if errEncode != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/books " + errEncode.Error())
+		return
+	}
 }
 
 // PUT /api/books/1 BookRequest{}
@@ -235,21 +296,25 @@ func putBook(w http.ResponseWriter, r *http.Request) {
 	int_id, errAtoi := strconv.Atoi(vars_id)
 	if errAtoi != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("PUT /api/books/" + vars_id + " " + errAtoi.Error())
 		return
 	}
 	requestBody, errIO := ioutil.ReadAll(r.Body)
 	if errIO != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/books/" + vars_id + " " + errIO.Error())
 		return
 	}
 	errUnmarshal := json.Unmarshal(requestBody, &payload)
 	if errUnmarshal != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/books/" + vars_id + " " + errUnmarshal.Error())
 		return
 	}
 	// wrong JSON or /{id}
 	if payload.Name == "" || payload.Author == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("PUT /api/books/" + vars_id + " wrong JSON or id")
 		return
 	}
 
@@ -257,6 +322,7 @@ func putBook(w http.ResponseWriter, r *http.Request) {
 	_, errQuery := db.Exec("UPDATE book SET Name = ?, Author = ? WHERE Id = ?", payload.Name, payload.Author, int_id)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/books/" + vars_id + " " + errQuery.Error())
 		return
 	}
 
@@ -267,10 +333,17 @@ func putBook(w http.ResponseWriter, r *http.Request) {
 func deleteBook(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	vars_id := vars["id"]
+
 	// validate if id == int, id !< 1
 	int_id, errAtoi := strconv.Atoi(vars_id)
-	if errAtoi != nil || int_id < 1 {
+	if errAtoi != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("DELETE /api/books/" + vars_id + " " + errAtoi.Error())
+		return
+	}
+	if int_id < 1 {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("DELETE /api/books/" + vars_id + "  id < 1")
 		return
 	}
 
@@ -278,6 +351,7 @@ func deleteBook(w http.ResponseWriter, r *http.Request) {
 	_, errQuery := db.Exec("DELETE FROM book WHERE id = ?", int_id)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("DELETE /api/books/" + vars_id + " " + errQuery.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -296,6 +370,7 @@ func getClient(w http.ResponseWriter, r *http.Request) {
 	int_id, errAtoi := strconv.Atoi(id)
 	if errAtoi != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("GET /api/clients/" + id + " " + errAtoi.Error())
 		return
 	}
 
@@ -303,11 +378,14 @@ func getClient(w http.ResponseWriter, r *http.Request) {
 	errScan := db.QueryRow("SELECT name FROM client WHERE id = ?", int_id).Scan(&name)
 	if errScan != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/clients/" + id + " " + errScan.Error())
 		return
 	}
 	// number too low or too high -> empty field
 	if name == "" {
 		w.WriteHeader(http.StatusNoContent)
+		log.Println("GET /api/clients/" + id + " empty fields")
+
 		return
 	}
 	client := ClientRequest{Name: name}
@@ -315,6 +393,7 @@ func getClient(w http.ResponseWriter, r *http.Request) {
 	errEncode := json.NewEncoder(w).Encode(client)
 	if errEncode != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/clients/" + id + " " + errEncode.Error())
 		return
 	}
 }
@@ -329,19 +408,26 @@ func getClients(w http.ResponseWriter, r *http.Request) {
 	rows, errQuery := db.Query("SELECT id, name FROM client")
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/clients/ " + errQuery.Error())
 		return
 	}
 	for rows.Next() {
 		errScan := rows.Scan(&id, &name)
 		if errScan != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Println("GET /api/clients/ " + errScan.Error())
 			return
 		}
 		clients = append(clients, Client{Id: id, Name: name})
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(clients)
+	errEncode := json.NewEncoder(w).Encode(clients)
+	if errEncode != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/clients/ " + errEncode.Error())
+		return
+	}
 }
 
 // POST /api/clients ClientRequest{}
@@ -352,16 +438,19 @@ func postClient(w http.ResponseWriter, r *http.Request) {
 	requestBody, errIO := ioutil.ReadAll(r.Body)
 	if errIO != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/clients/ " + errIO.Error())
 		return
 	}
 	errUnmarshal := json.Unmarshal(requestBody, &payload)
 	if errUnmarshal != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/clients/ " + errUnmarshal.Error())
 		return
 	}
 	// wrong JSON
 	if payload.Name == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("POST /api/clients/  empty fields in JSON")
 		return
 	}
 
@@ -369,17 +458,24 @@ func postClient(w http.ResponseWriter, r *http.Request) {
 	result, errQuery := db.Exec("INSERT INTO client (Name) VALUES (?)", payload.Name)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/clients/ " + errQuery.Error())
 		return
 	}
 	id, errLII := result.LastInsertId()
 	if errLII != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/clients/ " + errLII.Error())
 		return
 	}
 	response = ClientResponse{Id: int(id)}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
+	errEncode := json.NewEncoder(w).Encode(response)
+	if errEncode != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/clients " + errEncode.Error())
+		return
+	}
 }
 
 // PUT /api/clients/1 ClientRequest{}
@@ -392,21 +488,25 @@ func putClient(w http.ResponseWriter, r *http.Request) {
 	int_id, errAtoi := strconv.Atoi(vars_id)
 	if errAtoi != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("PUT /api/clients/" + vars_id + " " + errAtoi.Error())
 		return
 	}
 	requestBody, errIO := ioutil.ReadAll(r.Body)
 	if errIO != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/clients/" + vars_id + " " + errIO.Error())
 		return
 	}
 	errUnmarshal := json.Unmarshal(requestBody, &payload)
 	if errUnmarshal != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/clients/" + vars_id + " " + errUnmarshal.Error())
 		return
 	}
 	// wrong JSON or /{id}
 	if payload.Name == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("PUT /api/clients/" + vars_id + "  wrong JSON or id")
 		return
 	}
 
@@ -414,6 +514,7 @@ func putClient(w http.ResponseWriter, r *http.Request) {
 	_, errQuery := db.Exec("UPDATE client SET Name = ? WHERE Id = ?", payload.Name, int_id)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/clients/" + vars_id + " " + errQuery.Error())
 		return
 	}
 
@@ -424,10 +525,17 @@ func putClient(w http.ResponseWriter, r *http.Request) {
 func deleteClient(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	vars_id := vars["id"]
-	// validate if id == int, id !< 1
+
+	// validate if id == int, id ! < 1
 	int_id, errAtoi := strconv.Atoi(vars_id)
-	if errAtoi != nil || int_id < 1 {
+	if errAtoi != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("DELETE /api/clients/" + vars_id + " " + errAtoi.Error())
+		return
+	}
+	if int_id < 1 {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("DELETE /api/clients/" + vars_id + "  id < 1")
 		return
 	}
 
@@ -435,6 +543,7 @@ func deleteClient(w http.ResponseWriter, r *http.Request) {
 	_, errQuery := db.Exec("DELETE FROM client WHERE id = ?", vars_id)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("DELETE /api/clients/" + vars_id + " " + errQuery.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -445,7 +554,7 @@ func deleteClient(w http.ResponseWriter, r *http.Request) {
 // GET /api/libraries/1
 func getLibrary(w http.ResponseWriter, r *http.Request) {
 	var idBook, idClient int
-	var date string
+	var bookName, clientName, date string
 	var active bool
 
 	vars := mux.Vars(r)
@@ -455,25 +564,29 @@ func getLibrary(w http.ResponseWriter, r *http.Request) {
 	int_id, errAtoi := strconv.Atoi(id)
 	if errAtoi != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("GET /api/libraries/" + id + " " + errAtoi.Error())
 		return
 	}
 
 	// repository
-	errScan := db.QueryRow("SELECT id_book, id_client, date, active FROM library WHERE id = ?", int_id).Scan(&idBook, &idClient, &date, &active)
+	errScan := db.QueryRow("SELECT id_book, book.name, id_client, client.name, date, active FROM library INNER JOIN book ON library.id_book = book.id INNER JOIN client ON library.id_client = client.id WHERE library.id = ?", int_id).Scan(&idBook, &bookName, &idClient, &clientName, &date, &active)
 	if errScan != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/libraries/" + id + " " + errScan.Error())
 		return
 	}
 	// number too low or too high -> empty field
 	if idBook == 0 || idClient == 0 || date == "" {
 		w.WriteHeader(http.StatusNoContent)
+		log.Println("GET /api/libraries/" + id + "  wrong JSON or ID")
 		return
 	}
-	library := LibraryRequest{IdBook: idBook, IdClient: idClient, Date: date, Active: active}
+	library := LibraryRequestJoin{IdBook: idBook, BookName: bookName, IdClient: idClient, ClientName: clientName, Date: date, Active: active}
 	w.WriteHeader(http.StatusOK)
 	errEncode := json.NewEncoder(w).Encode(library)
 	if errEncode != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/libraries/" + id + " " + errEncode.Error())
 		return
 	}
 }
@@ -481,27 +594,34 @@ func getLibrary(w http.ResponseWriter, r *http.Request) {
 // GET /api/libraries
 func getLibraries(w http.ResponseWriter, r *http.Request) {
 	var id, id_book, id_client int
-	var date string
+	var bookName, clientName, date string
 	var active bool
-	var libraries []Library
+	var libraries []LibraryJoin
 
 	// repository
-	rows, errQuery := db.Query("SELECT id, id_book, id_client, date, active FROM library")
+	rows, errQuery := db.Query("SELECT library.id, id_book, book.name, id_client, client.name, date, active FROM library INNER JOIN book ON library.id_book = book.id INNER JOIN client ON library.id_client = client.id ")
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/libraries" + errQuery.Error())
 		return
 	}
 	for rows.Next() {
-		errScan := rows.Scan(&id, &id_book, &id_client, &date, &active)
+		errScan := rows.Scan(&id, &id_book, &bookName, &id_client, &clientName, &date, &active)
 		if errScan != nil {
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Println("GET /api/libraries" + errScan.Error())
 			return
 		}
-		libraries = append(libraries, Library{Id: id, IdBook: id_book, IdClient: id_client, Date: date, Active: active})
+		libraries = append(libraries, LibraryJoin{Id: id, IdBook: id_book, BookName: bookName, IdClient: id_client, ClientName: clientName, Date: date, Active: active})
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(libraries)
+	errEncode := json.NewEncoder(w).Encode(libraries)
+	if errEncode != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("GET /api/libraries " + errEncode.Error())
+		return
+	}
 }
 
 // POST /api/libraries LibraryRequest{}
@@ -512,34 +632,44 @@ func postLibrary(w http.ResponseWriter, r *http.Request) {
 	requestBody, errIO := ioutil.ReadAll(r.Body)
 	if errIO != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/libraries " + errIO.Error())
 		return
 	}
 	errUnmarshal := json.Unmarshal(requestBody, &payload)
 	if errUnmarshal != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/libraries " + errUnmarshal.Error())
 		return
 	}
 	// wrong JSON
-	if payload.IdBook == 0 || payload.IdClient == 0 || payload.Date == "" {
+	if payload.IdBook == 0 || payload.IdClient == 0 {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("POST /api/libraries wrong JSON or ID")
 		return
 	}
 
 	// repository
-	result, errQuery := db.Exec("INSERT INTO library (id_book, id_client, date, active) VALUES (?, ?, ?, ?)", payload.IdBook, payload.IdClient, payload.Date, payload.Active)
+	result, errQuery := db.Exec("INSERT INTO library (id_book, id_client, active) VALUES (?, ?, ?)", payload.IdBook, payload.IdClient, payload.Active)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/libraries " + errQuery.Error())
 		return
 	}
 	id, errLII := result.LastInsertId()
 	if errLII != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/libraries " + errLII.Error())
 		return
 	}
 	response = LibraryResponse{Id: int(id)}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
+	errEncode := json.NewEncoder(w).Encode(response)
+	if errEncode != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("POST /api/libraries " + errEncode.Error())
+		return
+	}
 }
 
 // PUT /api/libraries/1 LibraryRequest{}
@@ -552,21 +682,25 @@ func putLibrary(w http.ResponseWriter, r *http.Request) {
 	int_id, errAtoi := strconv.Atoi(vars_id)
 	if errAtoi != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("PUT /api/libraries/" + vars_id + " " + errAtoi.Error())
 		return
 	}
 	requestBody, errIO := ioutil.ReadAll(r.Body)
 	if errIO != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/libraries/" + vars_id + " " + errIO.Error())
 		return
 	}
 	errUnmarshal := json.Unmarshal(requestBody, &payload)
 	if errUnmarshal != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/libraries/" + vars_id + " " + errUnmarshal.Error())
 		return
 	}
 	// wrong JSON or /{id}
 	if payload.IdBook == 0 || payload.IdClient == 0 || payload.Date == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("PUT /api/libraries/" + vars_id + " wrong JSON or ID")
 		return
 	}
 
@@ -574,6 +708,7 @@ func putLibrary(w http.ResponseWriter, r *http.Request) {
 	_, errQuery := db.Exec("UPDATE library SET Id_book = ?, Id_client = ?, Date = ?, Active = ? WHERE Id = ?", payload.IdBook, payload.IdClient, payload.Date, payload.Active, int_id)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("PUT /api/libraries/" + vars_id + " " + errQuery.Error())
 		return
 	}
 
@@ -586,8 +721,14 @@ func deleteLibrary(w http.ResponseWriter, r *http.Request) {
 	vars_id := vars["id"]
 	// validate if id == int, id !< 1
 	int_id, errAtoi := strconv.Atoi(vars_id)
-	if errAtoi != nil || int_id < 1 {
+	if errAtoi != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("DELETE /api/libraries/" + vars_id + " " + errAtoi.Error())
+		return
+	}
+	if int_id < 1 {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Println("DELETE /api/libraries/" + vars_id + "  id < 1")
 		return
 	}
 
