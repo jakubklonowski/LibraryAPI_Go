@@ -53,37 +53,26 @@ type ClientResponse struct {
 }
 
 type Library struct {
-	Id       int
-	IdBook   int
-	IdClient int
-	Date     string
-	Active   bool
+	Id     int
+	Date   string
+	Active bool
 }
 
 type LibraryJoin struct {
-	Id         int
-	IdBook     int
-	BookName   string
-	IdClient   int
-	ClientName string
-	Date       string
-	Active     bool
+	Library Library
+	Book    Book
+	Client  Client
 }
 
 type LibraryRequest struct {
-	IdBook   int
-	IdClient int
-	Date     string
-	Active   bool
+	Date   string
+	Active bool
 }
 
 type LibraryRequestJoin struct {
-	IdBook     int
-	BookName   string
-	IdClient   int
-	ClientName string
-	Date       string
-	Active     bool
+	Library LibraryRequest
+	Book    Book
+	Client  Client
 }
 
 type LibraryResponse struct {
@@ -554,7 +543,7 @@ func deleteClient(w http.ResponseWriter, r *http.Request) {
 // GET /api/libraries/1
 func getLibrary(w http.ResponseWriter, r *http.Request) {
 	var idBook, idClient int
-	var bookName, clientName, date string
+	var bookName, bookAuthor, clientName, date string
 	var active bool
 
 	vars := mux.Vars(r)
@@ -569,7 +558,7 @@ func getLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// repository
-	errScan := db.QueryRow("SELECT id_book, book.name, id_client, client.name, date, active FROM library INNER JOIN book ON library.id_book = book.id INNER JOIN client ON library.id_client = client.id WHERE library.id = ?", int_id).Scan(&idBook, &bookName, &idClient, &clientName, &date, &active)
+	errScan := db.QueryRow("SELECT id_book, book.name, book.author, id_client, client.name, date, active FROM library INNER JOIN book ON library.id_book = book.id INNER JOIN client ON library.id_client = client.id WHERE library.id = ?", int_id).Scan(&idBook, &bookName, &bookAuthor, &idClient, &clientName, &date, &active)
 	if errScan != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("GET /api/libraries/" + id + " " + errScan.Error())
@@ -581,7 +570,11 @@ func getLibrary(w http.ResponseWriter, r *http.Request) {
 		log.Println("GET /api/libraries/" + id + "  wrong JSON or ID")
 		return
 	}
-	library := LibraryRequestJoin{IdBook: idBook, BookName: bookName, IdClient: idClient, ClientName: clientName, Date: date, Active: active}
+	library := LibraryRequestJoin{
+		LibraryRequest{Date: date, Active: active},
+		Book{Id: idBook, Name: bookName, Author: bookAuthor},
+		Client{Id: idClient, Name: clientName},
+	}
 	w.WriteHeader(http.StatusOK)
 	errEncode := json.NewEncoder(w).Encode(library)
 	if errEncode != nil {
@@ -594,25 +587,29 @@ func getLibrary(w http.ResponseWriter, r *http.Request) {
 // GET /api/libraries
 func getLibraries(w http.ResponseWriter, r *http.Request) {
 	var id, id_book, id_client int
-	var bookName, clientName, date string
+	var bookName, bookAuthor, clientName, date string
 	var active bool
 	var libraries []LibraryJoin
 
 	// repository
-	rows, errQuery := db.Query("SELECT library.id, id_book, book.name, id_client, client.name, date, active FROM library INNER JOIN book ON library.id_book = book.id INNER JOIN client ON library.id_client = client.id ")
+	rows, errQuery := db.Query("SELECT library.id, id_book, book.name, book.author, id_client, client.name, date, active FROM library INNER JOIN book ON library.id_book = book.id INNER JOIN client ON library.id_client = client.id ")
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("GET /api/libraries" + errQuery.Error())
 		return
 	}
 	for rows.Next() {
-		errScan := rows.Scan(&id, &id_book, &bookName, &id_client, &clientName, &date, &active)
+		errScan := rows.Scan(&id, &id_book, &bookName, &bookAuthor, &id_client, &clientName, &date, &active)
 		if errScan != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			log.Println("GET /api/libraries" + errScan.Error())
 			return
 		}
-		libraries = append(libraries, LibraryJoin{Id: id, IdBook: id_book, BookName: bookName, IdClient: id_client, ClientName: clientName, Date: date, Active: active})
+		libraries = append(libraries, LibraryJoin{
+			Library{Id: id, Date: date, Active: active},
+			Book{Id: id_book, Name: bookName, Author: bookAuthor},
+			Client{Id: id_client, Name: clientName},
+		})
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -624,9 +621,9 @@ func getLibraries(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /api/libraries LibraryRequest{}
+// POST /api/libraries LibraryRequestJoin{}
 func postLibrary(w http.ResponseWriter, r *http.Request) {
-	var payload LibraryRequest
+	var payload LibraryRequestJoin
 	var response LibraryResponse
 
 	requestBody, errIO := ioutil.ReadAll(r.Body)
@@ -642,14 +639,14 @@ func postLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// wrong JSON
-	if payload.IdBook == 0 || payload.IdClient == 0 {
+	if payload.Book.Id == 0 || payload.Client.Id == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		log.Println("POST /api/libraries wrong JSON or ID")
 		return
 	}
 
 	// repository
-	result, errQuery := db.Exec("INSERT INTO library (id_book, id_client, active) VALUES (?, ?, ?)", payload.IdBook, payload.IdClient, payload.Active)
+	result, errQuery := db.Exec("INSERT INTO library (id_book, id_client, active) VALUES (?, ?, ?)", payload.Book.Id, payload.Client.Id, payload.Library.Active)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("POST /api/libraries " + errQuery.Error())
@@ -672,9 +669,9 @@ func postLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// PUT /api/libraries/1 LibraryRequest{}
+// PUT /api/libraries/1 LibraryRequestJoin{}
 func putLibrary(w http.ResponseWriter, r *http.Request) {
-	var payload Library
+	var payload LibraryRequestJoin
 
 	vars := mux.Vars(r)
 	vars_id := vars["id"]
@@ -698,14 +695,14 @@ func putLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// wrong JSON or /{id}
-	if payload.IdBook == 0 || payload.IdClient == 0 || payload.Date == "" {
+	if payload.Book.Id == 0 || payload.Client.Id == 0 || payload.Library.Date == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		log.Println("PUT /api/libraries/" + vars_id + " wrong JSON or ID")
 		return
 	}
 
 	// repository
-	_, errQuery := db.Exec("UPDATE library SET Id_book = ?, Id_client = ?, Date = ?, Active = ? WHERE Id = ?", payload.IdBook, payload.IdClient, payload.Date, payload.Active, int_id)
+	_, errQuery := db.Exec("UPDATE library SET Id_book = ?, Id_client = ?, Date = ?, Active = ? WHERE Id = ?", payload.Book.Id, payload.Client.Id, payload.Library.Date, payload.Library.Active, int_id)
 	if errQuery != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("PUT /api/libraries/" + vars_id + " " + errQuery.Error())
